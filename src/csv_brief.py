@@ -8,7 +8,7 @@ import csv
 import hashlib
 import html
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -43,7 +43,71 @@ def parse_dates(values: list[str]) -> list[date] | None:
         return None
 
 
-def profile_csv(input_path: Path, include_top_values: bool = True) -> dict:
+def audit_join_key(
+    rows: list[dict[str, str]],
+    headers: list[str],
+    key_columns: list[str],
+    include_key_values: bool = True,
+) -> dict:
+    keys = [clean_header(column) for column in key_columns]
+    if any(not column for column in keys):
+        raise ValueError("Join-key column names must not be blank")
+    if len(set(keys)) != len(keys):
+        raise ValueError("Join-key columns must not be repeated")
+    unknown = [column for column in keys if column not in headers]
+    if unknown:
+        raise ValueError(f"Unknown join-key columns: {', '.join(unknown)}")
+
+    groups: dict[tuple[str, ...], list[int]] = defaultdict(list)
+    blank_rows: list[int] = []
+    for source_row, row in enumerate(rows, start=2):
+        key = tuple(row[column] for column in keys)
+        if not all(key):
+            blank_rows.append(source_row)
+        else:
+            groups[key].append(source_row)
+
+    duplicate_groups = [
+        (key, source_rows)
+        for key, source_rows in sorted(groups.items())
+        if len(source_rows) > 1
+    ]
+    group_details = []
+    for key, source_rows in duplicate_groups:
+        detail: dict[str, object] = {"source_rows": source_rows}
+        if include_key_values:
+            detail["key"] = list(key)
+        group_details.append(detail)
+
+    duplicate_key_rows = sorted(
+        source_row
+        for _, source_rows in duplicate_groups
+        for source_row in source_rows
+    )
+    ready = not blank_rows and not duplicate_groups
+    return {
+        "key_columns": keys,
+        "one_to_one_ready": ready,
+        "status": "pass" if ready else "review",
+        "blank_key_rows": blank_rows,
+        "duplicate_key_groups": len(duplicate_groups),
+        "duplicate_key_rows": duplicate_key_rows,
+        "duplicate_key_excess_rows": sum(len(source_rows) - 1 for _, source_rows in duplicate_groups),
+        "groups": group_details,
+        "interpretation": (
+            "No blank or duplicate keys were found in the declared columns."
+            if ready
+            else "Review blank or duplicate keys before using this file as the one-side of a join."
+        ),
+    }
+
+
+def profile_csv(
+    input_path: Path,
+    include_top_values: bool = True,
+    key_columns: list[str] | None = None,
+    include_key_values: bool = True,
+) -> dict:
     source_bytes = input_path.read_bytes()
     with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -116,7 +180,7 @@ def profile_csv(input_path: Path, include_top_values: bool = True) -> dict:
     if duplicate_rows:
         flags.append(f"{duplicate_rows} exact duplicate row(s) require review")
 
-    return {
+    profile = {
         "source_file": input_path.name,
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "row_count": len(rows),
@@ -132,6 +196,14 @@ def profile_csv(input_path: Path, include_top_values: bool = True) -> dict:
             "Human review is required before sharing or acting on results",
         ],
     }
+    if key_columns:
+        profile["join_guard"] = audit_join_key(
+            rows,
+            headers,
+            key_columns,
+            include_key_values=include_key_values,
+        )
+    return profile
 
 
 def render_html(profile: dict, title: str) -> str:
@@ -162,6 +234,32 @@ def render_html(profile: dict, title: str) -> str:
     flags = profile["quality_flags"] or ["No missing cells or exact duplicate rows detected."]
     flag_items = "".join(f"<li>{escaped(flag)}</li>" for flag in flags)
     status = escaped(str(profile["baseline_status"]).upper())
+    join_guard = profile.get("join_guard")
+    join_card = ""
+    join_section = ""
+    if join_guard:
+        join_status = escaped(str(join_guard["status"]).upper())
+        join_card = (
+            '<div class="card"><div class="muted">JoinGuard</div>'
+            f'<div class="value">{join_status}</div></div>'
+        )
+        group_items = []
+        for index, group in enumerate(join_guard["groups"], start=1):
+            key_text = " / ".join(group.get("key", [])) or f"hidden group {index}"
+            rows_text = ", ".join(str(row) for row in group["source_rows"])
+            group_items.append(
+                f"<li><strong>{escaped(key_text)}</strong>: source rows {escaped(rows_text)}</li>"
+            )
+        groups_html = "".join(group_items) or "<li>No duplicate key groups detected.</li>"
+        blank_text = ", ".join(str(row) for row in join_guard["blank_key_rows"]) or "None"
+        join_section = f"""
+  <section><h2>JoinGuard</h2>
+    <p><strong>Declared key:</strong> {escaped(', '.join(join_guard["key_columns"]))}</p>
+    <p><strong>One-to-one ready:</strong> {escaped(join_guard["one_to_one_ready"])}</p>
+    <p><strong>Blank-key source rows:</strong> {escaped(blank_text)}</p>
+    <p>{escaped(join_guard["interpretation"])}</p>
+    <h3>Duplicate key evidence</h3><ul>{groups_html}</ul>
+  </section>"""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -192,8 +290,10 @@ def render_html(profile: dict, title: str) -> str:
     <div class="card"><div class="muted">Columns</div><div class="value">{escaped(profile["column_count"])}</div></div>
     <div class="card"><div class="muted">Missing cells</div><div class="value">{escaped(profile["missing_cells"])}</div></div>
     <div class="card"><div class="muted">Exact duplicate rows</div><div class="value">{escaped(profile["exact_duplicate_rows"])}</div></div>
+    {join_card}
   </div>
   <section><h2>Quality flags</h2><ul>{flag_items}</ul></section>
+  {join_section}
   <section><h2>Column profile</h2><table>
     <thead><tr><th>Column</th><th>Type</th><th>Present</th><th>Missing</th><th>Distinct</th><th>Range</th><th>Top values</th></tr></thead>
     <tbody>{''.join(column_rows)}</tbody>
@@ -204,8 +304,20 @@ def render_html(profile: dict, title: str) -> str:
 """
 
 
-def write_brief(input_path: Path, output_dir: Path, title: str, include_top_values: bool = True) -> dict:
-    profile = profile_csv(input_path, include_top_values=include_top_values)
+def write_brief(
+    input_path: Path,
+    output_dir: Path,
+    title: str,
+    include_top_values: bool = True,
+    key_columns: list[str] | None = None,
+    include_key_values: bool = True,
+) -> dict:
+    profile = profile_csv(
+        input_path,
+        include_top_values=include_top_values,
+        key_columns=key_columns,
+        include_key_values=include_key_values,
+    )
     profile_path = output_dir / "profile.json"
     brief_path = output_dir / "brief.html"
     source_path = input_path.resolve()
@@ -223,12 +335,21 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--title", default="CSV Data Brief")
     parser.add_argument("--hide-top-values", action="store_true")
+    parser.add_argument(
+        "--key",
+        action="append",
+        default=[],
+        help="Declared join-key column; repeat for a composite key",
+    )
+    parser.add_argument("--hide-key-values", action="store_true")
     args = parser.parse_args()
     result = write_brief(
         args.input,
         args.output_dir,
         args.title,
         include_top_values=not args.hide_top_values,
+        key_columns=args.key,
+        include_key_values=not args.hide_key_values,
     )
     summary = {
         "brief": str(result["brief_path"]),
@@ -237,6 +358,9 @@ def main() -> int:
         "columns": result["profile"]["column_count"],
         "baseline_status": result["profile"]["baseline_status"],
     }
+    if "join_guard" in result["profile"]:
+        summary["join_guard_status"] = result["profile"]["join_guard"]["status"]
+        summary["one_to_one_ready"] = result["profile"]["join_guard"]["one_to_one_ready"]
     print(json.dumps(summary, indent=2))
     return 0
 
