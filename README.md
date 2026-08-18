@@ -27,6 +27,11 @@ passes baseline structural checks for the one-side of a one-to-one join. It
 never guesses which key is correct or proves that the chosen relationship is
 semantically valid.
 
+The second advanced feature, **Schema / Quality Drift Guard**, compares a
+baseline CSV with the current export. It records added and removed columns,
+basic type changes, row-count movement, per-column missing-rate and distinct-
+count changes, and declared-key uniqueness regression in deterministic JSON.
+
 ## Hard boundaries
 
 CSV Brief does **not** parse XLSX workbooks or PDFs, fetch webpages, run OCR,
@@ -42,13 +47,15 @@ Open a terminal in the directory containing this README and run:
 python3 scripts/run_demo.py
 ```
 
-The demo uses only `assets/synthetic_sales.csv`, writes into a temporary local
-directory, and prints a clear `[PASS]` or `[FAIL]` result.
+The demo compares two bundled synthetic fixtures, writes into a temporary local
+directory, and prints a clear `[PASS]` or `[FAIL]` result. A pass means the demo
+correctly detected its intentionally planted quality regressions.
 
 ## Run on a CSV
 
 ```bash
 python3 src/csv_brief.py assets/synthetic_sales.csv \
+  --baseline assets/synthetic_sales_baseline.csv \
   --output-dir my-brief \
   --title "Synthetic Sales Data Brief" \
   --key order_id
@@ -58,6 +65,15 @@ Outputs:
 
 - `my-brief/brief.html`
 - `my-brief/profile.json`
+- `my-brief/drift.json` when `--baseline` is supplied
+
+Drift Guard is fail-closed for review-level regressions. It writes all outputs
+first, then exits with status `2` when it detects a new/removed column, type
+change, missing-rate increase, or a declared key that is not one-to-one ready.
+Row-count changes, distinct-count changes, missing-rate decreases, and key
+improvements are still recorded but are informational and do not fail the gate.
+Malformed or unreadable baseline/current files raise an error rather than
+producing a passing comparison.
 
 For a safer report that does not include the most common text values:
 
@@ -83,19 +99,23 @@ python3 src/csv_brief.py dimension.csv \
 python3 -m unittest discover -s tests -v
 ```
 
-The seven tests cover the bundled synthetic profile, numeric/date inference,
+The twelve tests cover the bundled synthetic profile, numeric/date inference,
 HTML and JSON generation, suppression of top text values, rejection of ragged
 rows and blank headers, duplicate declared keys with exact source-row lineage,
 composite keys, blank key parts, hidden key values, and unknown key rejection.
-They do not cover real customer files, XLSX, OCR, large-file performance,
-locale-specific number/date formats, fuzzy duplicates, or the correctness of
-business conclusions.
+They also cover unchanged baselines, row/missing/distinct drift, key uniqueness
+regression, added/removed columns, type changes, persisted drift JSON/HTML, and
+fail-closed CLI behavior for review-level drift and malformed baselines. They do
+not cover real customer files, XLSX, OCR, large-file performance,
+locale-specific number/date formats, fuzzy duplicates, semantic schema
+compatibility, or business-specific thresholds.
 
 ## Easy-to-scope client deliverable
 
 A fixed-scope engagement can be defined as: up to three CSV exports, one
 declared single/composite key per file, local deterministic profiling, JoinGuard
-evidence, HTML briefs, JSON profiles, and an analyst-reviewed findings note.
+evidence, one agreed baseline comparison, HTML briefs, JSON profiles/drift
+registers, and an analyst-reviewed findings note.
 Entity resolution, fuzzy matching, source-system fixes, and dashboard changes
 remain separately quoted work.
 
@@ -118,13 +138,14 @@ design, data cleanup, and analyst-reviewed public-data briefs.
 
 - up to 5,000 CSV rows;
 - one agreed deterministic duplicate key;
-- cleaned CSV plus an exception register;
-- reproducible JSON profile and a reviewable HTML brief;
+- reproducible JSON profile, optional baseline drift register, and a reviewable HTML brief;
+- JoinGuard source-row evidence for blank or duplicate declared keys;
 - concise QA and reconciliation notes;
 - delivery through an active, funded marketplace contract.
 
-Larger files, fuzzy entity matching, XLSX workbooks, dashboards, and custom
-business rules are scoped separately before work begins.
+Data cleaning, corrected output files, larger files, fuzzy entity matching,
+XLSX workbooks, dashboards, and custom business rules are scoped separately
+before work begins.
 
 **[Hire me on Upwork](https://www.upwork.com/freelancers/~0126ecd9d346d44de2)**
 
