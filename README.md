@@ -20,6 +20,13 @@ It is a small portfolio product for CSV cleaning, BI, and public-data research
 jobs. It reports structure, missing cells, exact duplicate rows, inferred basic
 column types, numeric/date ranges, and optional top text values.
 
+Its standout feature, **JoinGuard**, audits a user-declared single or composite
+key before a Power BI, SQL, or spreadsheet join. It reports blank-key rows,
+duplicate key groups, exact source-row evidence, and whether the declared key
+passes baseline structural checks for the one-side of a one-to-one join. It
+never guesses which key is correct or proves that the chosen relationship is
+semantically valid.
+
 ## Hard boundaries
 
 CSV Brief does **not** parse XLSX workbooks or PDFs, fetch webpages, run OCR,
@@ -43,7 +50,8 @@ directory, and prints a clear `[PASS]` or `[FAIL]` result.
 ```bash
 python3 src/csv_brief.py assets/synthetic_sales.csv \
   --output-dir my-brief \
-  --title "Synthetic Sales Data Brief"
+  --title "Synthetic Sales Data Brief" \
+  --key order_id
 ```
 
 Outputs:
@@ -59,17 +67,37 @@ python3 src/csv_brief.py assets/synthetic_sales.csv \
   --hide-top-values
 ```
 
+Repeat `--key` for a composite key. Use `--hide-key-values` to retain duplicate
+source-row evidence without printing the actual key values:
+
+```bash
+python3 src/csv_brief.py dimension.csv \
+  --output-dir dimension-brief \
+  --key account_id --key region \
+  --hide-key-values
+```
+
 ## Current test scope
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-The five tests cover the bundled synthetic profile, numeric/date inference,
+The seven tests cover the bundled synthetic profile, numeric/date inference,
 HTML and JSON generation, suppression of top text values, rejection of ragged
-rows, and rejection of blank headers. They do not cover real customer files,
-XLSX, OCR, large-file performance, locale-specific number/date formats, fuzzy
-duplicates, or the correctness of business conclusions.
+rows and blank headers, duplicate declared keys with exact source-row lineage,
+composite keys, blank key parts, hidden key values, and unknown key rejection.
+They do not cover real customer files, XLSX, OCR, large-file performance,
+locale-specific number/date formats, fuzzy duplicates, or the correctness of
+business conclusions.
+
+## Easy-to-scope client deliverable
+
+A fixed-scope engagement can be defined as: up to three CSV exports, one
+declared single/composite key per file, local deterministic profiling, JoinGuard
+evidence, HTML briefs, JSON profiles, and an analyst-reviewed findings note.
+Entity resolution, fuzzy matching, source-system fixes, and dashboard changes
+remain separately quoted work.
 
 ## Privacy and safe use
 
