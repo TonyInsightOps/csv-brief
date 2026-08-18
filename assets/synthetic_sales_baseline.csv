@@ -1,0 +1,7 @@
+order_id,region,category,revenue,order_date,status
+O-1001,North,Software,1250.50,2026-07-01,Won
+O-1002,West,Services,800.00,2026-07-02,Won
+O-1003,East,Hardware,700.00,2026-07-03,Pending
+O-1004,North,Software,2200.00,2026-07-04,Won
+O-1005,West,Services,500.00,2026-07-05,Lost
+O-1006,South,Hardware,975.25,2026-07-06,Won
