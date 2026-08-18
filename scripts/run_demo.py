@@ -19,6 +19,8 @@ def main() -> int:
                 sys.executable,
                 "src/csv_brief.py",
                 "assets/synthetic_sales.csv",
+                "--baseline",
+                "assets/synthetic_sales_baseline.csv",
                 "--output-dir",
                 directory,
                 "--title",
@@ -34,9 +36,11 @@ def main() -> int:
         )
         try:
             profile = json.loads((Path(directory) / "profile.json").read_text(encoding="utf-8"))
+            drift = json.loads((Path(directory) / "drift.json").read_text(encoding="utf-8"))
             html_exists = (Path(directory) / "brief.html").is_file()
+            drift_codes = {item["code"] for item in drift["drifts"]}
             passed = (
-                process.returncode == 0
+                process.returncode == 2
                 and html_exists
                 and profile["row_count"] == 7
                 and profile["column_count"] == 6
@@ -44,12 +48,16 @@ def main() -> int:
                 and profile["exact_duplicate_rows"] == 1
                 and not profile["join_guard"]["one_to_one_ready"]
                 and profile["join_guard"]["duplicate_key_groups"] == 1
+                and drift["status"] == "review"
+                and drift["key_comparison"]["uniqueness_regression"]
+                and "missing_rate_increased" in drift_codes
             )
             detail = (
                 f'{profile["row_count"]} rows, {profile["column_count"]} columns, '
                 f'{profile["missing_cells"]} missing cell, '
                 f'{profile["exact_duplicate_rows"]} exact duplicate row; '
-                f'JoinGuard found {profile["join_guard"]["duplicate_key_groups"]} duplicate key group'
+                f'JoinGuard found {profile["join_guard"]["duplicate_key_groups"]} duplicate key group; '
+                "Drift Guard caught missing-rate and key regressions"
             )
         except (OSError, KeyError, json.JSONDecodeError) as error:
             passed, detail = False, str(error)
