@@ -23,6 +23,8 @@ def main() -> int:
                 directory,
                 "--title",
                 "Synthetic Sales Data Brief",
+                "--key",
+                "order_id",
             ],
             cwd=ROOT,
             capture_output=True,
@@ -40,11 +42,14 @@ def main() -> int:
                 and profile["column_count"] == 6
                 and profile["missing_cells"] == 1
                 and profile["exact_duplicate_rows"] == 1
+                and not profile["join_guard"]["one_to_one_ready"]
+                and profile["join_guard"]["duplicate_key_groups"] == 1
             )
             detail = (
                 f'{profile["row_count"]} rows, {profile["column_count"]} columns, '
                 f'{profile["missing_cells"]} missing cell, '
-                f'{profile["exact_duplicate_rows"]} exact duplicate row'
+                f'{profile["exact_duplicate_rows"]} exact duplicate row; '
+                f'JoinGuard found {profile["join_guard"]["duplicate_key_groups"]} duplicate key group'
             )
         except (OSError, KeyError, json.JSONDecodeError) as error:
             passed, detail = False, str(error)
