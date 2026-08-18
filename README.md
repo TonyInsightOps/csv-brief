@@ -1,5 +1,12 @@
 # CSV Brief
 
+![CSV Brief — from raw CSV to reviewable insight](docs/csv-brief-hero.png)
+
+[![Tests](https://github.com/TonyInsightOps/csv-brief/actions/workflows/test.yml/badge.svg)](https://github.com/TonyInsightOps/csv-brief/actions/workflows/test.yml)
+![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB)
+![No dependencies](https://img.shields.io/badge/dependencies-none-16A34A)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > **Local-only and stdlib-only:** CSV Brief makes no network requests, emits no
 > telemetry, requires no credentials, and uses only the Python standard library.
 > Python 3.9 or newer is required.
@@ -76,3 +83,21 @@ authorization. The bundled fixture is invented and safe for demonstrations.
 The MIT license permits commercial use. The open prototype can support paid
 work such as custom profiling rules, private workbook conversion, dashboard
 design, data cleanup, and analyst-reviewed public-data briefs.
+
+## Client-ready service
+
+### CSV Data Quality Mini Audit — US$99 fixed
+
+- up to 5,000 CSV rows;
+- one agreed deterministic duplicate key;
+- cleaned CSV plus an exception register;
+- reproducible JSON profile and a reviewable HTML brief;
+- concise QA and reconciliation notes;
+- delivery through an active, funded marketplace contract.
+
+Larger files, fuzzy entity matching, XLSX workbooks, dashboards, and custom
+business rules are scoped separately before work begins.
+
+**[Hire me on Upwork](https://www.upwork.com/freelancers/~0126ecd9d346d44de2)**
+
+For privacy, never post client files or personal data in GitHub issues.
