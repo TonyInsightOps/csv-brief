@@ -59,6 +59,42 @@ class CSVBriefTests(unittest.TestCase):
         )
         self.assertTrue(all("top_values" not in column for column in profile["columns"]))
 
+    def test_join_guard_flags_duplicate_declared_key(self):
+        module = load_module()
+        profile = module.profile_csv(
+            ROOT / "assets/synthetic_sales.csv",
+            key_columns=["order_id"],
+        )
+        guard = profile["join_guard"]
+        self.assertFalse(guard["one_to_one_ready"])
+        self.assertEqual(guard["duplicate_key_groups"], 1)
+        self.assertEqual(guard["duplicate_key_excess_rows"], 1)
+        self.assertEqual(guard["groups"][0]["key"], ["O-1001"])
+        self.assertEqual(guard["groups"][0]["source_rows"], [2, 7])
+
+    def test_join_guard_handles_composite_blank_and_hidden_keys(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "dimension.csv"
+            source.write_text(
+                "account,region,label\n"
+                "A1,North,First\n"
+                "A1,North,Duplicate\n"
+                "A2,,Missing region\n",
+                encoding="utf-8",
+            )
+            profile = module.profile_csv(
+                source,
+                key_columns=["account", "region"],
+                include_key_values=False,
+            )
+            guard = profile["join_guard"]
+            self.assertEqual(guard["blank_key_rows"], [4])
+            self.assertEqual(guard["duplicate_key_rows"], [2, 3])
+            self.assertNotIn("key", guard["groups"][0])
+            with self.assertRaisesRegex(ValueError, "Unknown join-key"):
+                module.profile_csv(source, key_columns=["missing_column"])
+
     def test_rejects_ragged_rows_and_blank_headers(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as directory:
