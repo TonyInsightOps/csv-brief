@@ -29,6 +29,16 @@ def decimal_text(value: Decimal) -> str:
     return text or "0"
 
 
+def rate_value(part: int, whole: int) -> Decimal:
+    if whole == 0:
+        return Decimal("0")
+    return Decimal(part) / Decimal(whole)
+
+
+def rate_text(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.000000000001")), "f")
+
+
 def parse_numbers(values: list[str]) -> list[Decimal] | None:
     try:
         return [Decimal(value) for value in values]
@@ -206,7 +216,173 @@ def profile_csv(
     return profile
 
 
-def render_html(profile: dict, title: str) -> str:
+def compare_profiles(baseline: dict, current: dict) -> dict:
+    baseline_columns = {column["name"]: column for column in baseline["columns"]}
+    current_columns = {column["name"]: column for column in current["columns"]}
+    baseline_names = set(baseline_columns)
+    current_names = set(current_columns)
+    added_columns = sorted(current_names - baseline_names)
+    removed_columns = sorted(baseline_names - current_names)
+    common_columns = sorted(baseline_names & current_names)
+
+    drifts: list[dict[str, object]] = []
+
+    def record(code: str, severity: str, detail: str, column: str | None = None) -> None:
+        item: dict[str, object] = {"code": code, "severity": severity, "detail": detail}
+        if column is not None:
+            item["column"] = column
+        drifts.append(item)
+
+    for column in added_columns:
+        record("column_added", "review", f"Column '{column}' is new in the current file.", column)
+    for column in removed_columns:
+        record("column_removed", "review", f"Column '{column}' is absent from the current file.", column)
+
+    type_changes = []
+    quality_changes = []
+    for column in common_columns:
+        before = baseline_columns[column]
+        after = current_columns[column]
+        if before["type"] != after["type"]:
+            change = {"column": column, "baseline": before["type"], "current": after["type"]}
+            type_changes.append(change)
+            record(
+                "type_changed",
+                "review",
+                f"Type changed from {before['type']} to {after['type']}.",
+                column,
+            )
+
+        before_rate_value = rate_value(int(before["missing"]), int(baseline["row_count"]))
+        after_rate_value = rate_value(int(after["missing"]), int(current["row_count"]))
+        rate_delta = after_rate_value - before_rate_value
+        before_rate = rate_text(before_rate_value)
+        after_rate = rate_text(after_rate_value)
+        distinct_delta = int(after["distinct"]) - int(before["distinct"])
+        if rate_delta != 0 or distinct_delta != 0:
+            quality_changes.append(
+                {
+                    "column": column,
+                    "missing_rate": {
+                        "baseline": before_rate,
+                        "current": after_rate,
+                        "delta": rate_text(rate_delta),
+                    },
+                    "distinct": {
+                        "baseline": before["distinct"],
+                        "current": after["distinct"],
+                        "delta": distinct_delta,
+                    },
+                }
+            )
+        if rate_delta != 0:
+            direction = "increased" if rate_delta > 0 else "decreased"
+            record(
+                f"missing_rate_{direction}",
+                "review" if rate_delta > 0 else "info",
+                f"Missing rate {direction} from {before_rate} to {after_rate}.",
+                column,
+            )
+        if distinct_delta != 0:
+            record(
+                "distinct_changed",
+                "info",
+                f"Distinct count changed from {before['distinct']} to {after['distinct']}.",
+                column,
+            )
+
+    row_delta = int(current["row_count"]) - int(baseline["row_count"])
+    if row_delta != 0:
+        record(
+            "row_count_changed",
+            "info",
+            f"Row count changed from {baseline['row_count']} to {current['row_count']}.",
+        )
+
+    key_comparison = None
+    baseline_key = baseline.get("join_guard")
+    current_key = current.get("join_guard")
+    if baseline_key is not None and current_key is not None:
+        uniqueness_regression = (
+            bool(baseline_key["one_to_one_ready"])
+            and not bool(current_key["one_to_one_ready"])
+        )
+        uniqueness_improvement = (
+            not bool(baseline_key["one_to_one_ready"])
+            and bool(current_key["one_to_one_ready"])
+        )
+        key_comparison = {
+            "key_columns": current_key["key_columns"],
+            "baseline_one_to_one_ready": baseline_key["one_to_one_ready"],
+            "current_one_to_one_ready": current_key["one_to_one_ready"],
+            "uniqueness_regression": uniqueness_regression,
+            "uniqueness_improvement": uniqueness_improvement,
+            "baseline_duplicate_key_groups": baseline_key["duplicate_key_groups"],
+            "current_duplicate_key_groups": current_key["duplicate_key_groups"],
+            "baseline_blank_key_rows": len(baseline_key["blank_key_rows"]),
+            "current_blank_key_rows": len(current_key["blank_key_rows"]),
+        }
+        if uniqueness_regression:
+            record(
+                "key_uniqueness_regression",
+                "review",
+                "The declared key passed in the baseline but is not one-to-one ready in the current file.",
+            )
+        elif not current_key["one_to_one_ready"]:
+            record(
+                "current_key_not_ready",
+                "review",
+                "The declared key is not one-to-one ready in either the baseline or current file.",
+            )
+        elif uniqueness_improvement:
+            record(
+                "key_uniqueness_improved",
+                "info",
+                "The declared key is one-to-one ready in the current file but was not in the baseline.",
+            )
+
+    review_count = sum(item["severity"] == "review" for item in drifts)
+    info_count = sum(item["severity"] == "info" for item in drifts)
+    return {
+        "comparison_ready": True,
+        "status": "review" if review_count else "pass",
+        "has_drift": bool(drifts),
+        "baseline": {
+            "source_file": baseline["source_file"],
+            "source_sha256": baseline["source_sha256"],
+        },
+        "current": {
+            "source_file": current["source_file"],
+            "source_sha256": current["source_sha256"],
+        },
+        "schema": {
+            "added_columns": added_columns,
+            "removed_columns": removed_columns,
+            "type_changes": type_changes,
+        },
+        "row_count": {
+            "baseline": baseline["row_count"],
+            "current": current["row_count"],
+            "delta": row_delta,
+        },
+        "column_quality_changes": quality_changes,
+        "key_comparison": key_comparison,
+        "drift_counts": {
+            "total": len(drifts),
+            "review": review_count,
+            "info": info_count,
+        },
+        "drifts": drifts,
+        "limits": [
+            "Deterministic structural comparison only",
+            "Row-count and distinct-count changes are informational",
+            "New/removed columns, type changes, missing-rate increases, and key regressions require review",
+            "No semantic validation or business-threshold inference",
+        ],
+    }
+
+
+def render_html(profile: dict, title: str, drift: dict | None = None) -> str:
     def escaped(value: object) -> str:
         return html.escape(str(value))
 
@@ -260,6 +436,37 @@ def render_html(profile: dict, title: str) -> str:
     <p>{escaped(join_guard["interpretation"])}</p>
     <h3>Duplicate key evidence</h3><ul>{groups_html}</ul>
   </section>"""
+    drift_card = ""
+    drift_section = ""
+    if drift is not None:
+        drift_status = escaped(str(drift["status"]).upper())
+        drift_card = (
+            '<div class="card"><div class="muted">Drift Guard</div>'
+            f'<div class="value">{drift_status}</div></div>'
+        )
+        drift_rows = "".join(
+            "<tr>"
+            f'<td>{escaped(item["severity"])}</td>'
+            f'<td>{escaped(item["code"])}</td>'
+            f'<td>{escaped(item.get("column", ""))}</td>'
+            f'<td>{escaped(item["detail"])}</td>'
+            "</tr>"
+            for item in drift["drifts"]
+        ) or '<tr><td colspan="4">No structural or profiled-quality drift detected.</td></tr>'
+        added = ", ".join(drift["schema"]["added_columns"]) or "None"
+        removed = ", ".join(drift["schema"]["removed_columns"]) or "None"
+        drift_section = f"""
+  <section><h2>Schema / Quality Drift Guard</h2>
+    <p><strong>Baseline:</strong> {escaped(drift["baseline"]["source_file"])} &rarr;
+       <strong>Current:</strong> {escaped(drift["current"]["source_file"])}</p>
+    <p><strong>Rows:</strong> {escaped(drift["row_count"]["baseline"])} &rarr;
+       {escaped(drift["row_count"]["current"])}
+       (delta {escaped(drift["row_count"]["delta"])})</p>
+    <p><strong>Added columns:</strong> {escaped(added)}<br>
+       <strong>Removed columns:</strong> {escaped(removed)}</p>
+    <table><thead><tr><th>Severity</th><th>Code</th><th>Column</th><th>Detail</th></tr></thead>
+      <tbody>{drift_rows}</tbody></table>
+  </section>"""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -291,9 +498,11 @@ def render_html(profile: dict, title: str) -> str:
     <div class="card"><div class="muted">Missing cells</div><div class="value">{escaped(profile["missing_cells"])}</div></div>
     <div class="card"><div class="muted">Exact duplicate rows</div><div class="value">{escaped(profile["exact_duplicate_rows"])}</div></div>
     {join_card}
+    {drift_card}
   </div>
   <section><h2>Quality flags</h2><ul>{flag_items}</ul></section>
   {join_section}
+  {drift_section}
   <section><h2>Column profile</h2><table>
     <thead><tr><th>Column</th><th>Type</th><th>Present</th><th>Missing</th><th>Distinct</th><th>Range</th><th>Top values</th></tr></thead>
     <tbody>{''.join(column_rows)}</tbody>
@@ -311,6 +520,7 @@ def write_brief(
     include_top_values: bool = True,
     key_columns: list[str] | None = None,
     include_key_values: bool = True,
+    baseline_path: Path | None = None,
 ) -> dict:
     profile = profile_csv(
         input_path,
@@ -318,15 +528,35 @@ def write_brief(
         key_columns=key_columns,
         include_key_values=include_key_values,
     )
+    drift = None
+    if baseline_path is not None:
+        baseline_profile = profile_csv(
+            baseline_path,
+            include_top_values=False,
+            key_columns=key_columns,
+            include_key_values=False,
+        )
+        drift = compare_profiles(baseline_profile, profile)
     profile_path = output_dir / "profile.json"
     brief_path = output_dir / "brief.html"
-    source_path = input_path.resolve()
-    if any(path.resolve() == source_path for path in (profile_path, brief_path)):
+    drift_path = output_dir / "drift.json"
+    source_paths = {input_path.resolve()}
+    if baseline_path is not None:
+        source_paths.add(baseline_path.resolve())
+    if any(path.resolve() in source_paths for path in (profile_path, brief_path, drift_path)):
         raise ValueError("Output directory would overwrite the source file")
     output_dir.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    brief_path.write_text(render_html(profile, title), encoding="utf-8")
-    return {"profile": profile, "profile_path": profile_path, "brief_path": brief_path}
+    if drift is not None:
+        drift_path.write_text(json.dumps(drift, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    brief_path.write_text(render_html(profile, title, drift=drift), encoding="utf-8")
+    return {
+        "profile": profile,
+        "profile_path": profile_path,
+        "brief_path": brief_path,
+        "drift": drift,
+        "drift_path": drift_path if drift is not None else None,
+    }
 
 
 def main() -> int:
@@ -342,6 +572,11 @@ def main() -> int:
         help="Declared join-key column; repeat for a composite key",
     )
     parser.add_argument("--hide-key-values", action="store_true")
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        help="Optional baseline CSV for deterministic schema and quality drift checks",
+    )
     args = parser.parse_args()
     result = write_brief(
         args.input,
@@ -350,6 +585,7 @@ def main() -> int:
         include_top_values=not args.hide_top_values,
         key_columns=args.key,
         include_key_values=not args.hide_key_values,
+        baseline_path=args.baseline,
     )
     summary = {
         "brief": str(result["brief_path"]),
@@ -361,8 +597,12 @@ def main() -> int:
     if "join_guard" in result["profile"]:
         summary["join_guard_status"] = result["profile"]["join_guard"]["status"]
         summary["one_to_one_ready"] = result["profile"]["join_guard"]["one_to_one_ready"]
+    if result["drift"] is not None:
+        summary["drift"] = str(result["drift_path"])
+        summary["drift_status"] = result["drift"]["status"]
+        summary["drift_counts"] = result["drift"]["drift_counts"]
     print(json.dumps(summary, indent=2))
-    return 0
+    return 2 if result["drift"] is not None and result["drift"]["status"] == "review" else 0
 
 
 if __name__ == "__main__":
