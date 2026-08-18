@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -107,6 +110,118 @@ class CSVBriefTests(unittest.TestCase):
             blank_header.write_text("id,\n1,ok\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "must not be blank"):
                 module.profile_csv(blank_header)
+
+    def test_drift_guard_detects_quality_and_key_regression(self):
+        module = load_module()
+        baseline = module.profile_csv(
+            ROOT / "assets/synthetic_sales_baseline.csv",
+            key_columns=["order_id"],
+        )
+        current = module.profile_csv(
+            ROOT / "assets/synthetic_sales.csv",
+            key_columns=["order_id"],
+        )
+        drift = module.compare_profiles(baseline, current)
+        codes = {item["code"] for item in drift["drifts"]}
+        self.assertEqual(drift["status"], "review")
+        self.assertEqual(drift["row_count"]["delta"], 1)
+        self.assertIn("row_count_changed", codes)
+        self.assertIn("missing_rate_increased", codes)
+        self.assertIn("distinct_changed", codes)
+        self.assertIn("key_uniqueness_regression", codes)
+        self.assertTrue(drift["key_comparison"]["uniqueness_regression"])
+
+        unchanged = module.compare_profiles(baseline, baseline)
+        self.assertEqual(unchanged["status"], "pass")
+        self.assertFalse(unchanged["has_drift"])
+
+    def test_drift_guard_detects_schema_and_type_changes(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            baseline_path = Path(directory) / "baseline.csv"
+            current_path = Path(directory) / "current.csv"
+            baseline_path.write_text(
+                "id,amount,legacy\n1,10,A\n2,20,B\n",
+                encoding="utf-8",
+            )
+            current_path.write_text(
+                "id,amount,new_col\n1,unknown,X\n2,30,Y\n",
+                encoding="utf-8",
+            )
+            baseline = module.profile_csv(baseline_path, key_columns=["id"])
+            current = module.profile_csv(current_path, key_columns=["id"])
+            drift = module.compare_profiles(baseline, current)
+            self.assertEqual(drift["schema"]["added_columns"], ["new_col"])
+            self.assertEqual(drift["schema"]["removed_columns"], ["legacy"])
+            self.assertEqual(
+                drift["schema"]["type_changes"],
+                [{"column": "amount", "baseline": "number", "current": "text"}],
+            )
+            self.assertEqual(drift["status"], "review")
+
+    def test_write_brief_with_baseline_creates_drift_outputs(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            result = module.write_brief(
+                ROOT / "assets/synthetic_sales.csv",
+                Path(directory),
+                "Drift Review",
+                key_columns=["order_id"],
+                baseline_path=ROOT / "assets/synthetic_sales_baseline.csv",
+            )
+            self.assertTrue(result["drift_path"].is_file())
+            persisted = json.loads(result["drift_path"].read_text(encoding="utf-8"))
+            self.assertEqual(persisted["status"], "review")
+            rendered = result["brief_path"].read_text(encoding="utf-8")
+            self.assertIn("Schema / Quality Drift Guard", rendered)
+            self.assertIn("key_uniqueness_regression", rendered)
+
+    def test_cli_fails_closed_on_review_level_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "src/csv_brief.py"),
+                    str(ROOT / "assets/synthetic_sales.csv"),
+                    "--baseline",
+                    str(ROOT / "assets/synthetic_sales_baseline.csv"),
+                    "--output-dir",
+                    directory,
+                    "--key",
+                    "order_id",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 2)
+            summary = json.loads(process.stdout)
+            self.assertEqual(summary["drift_status"], "review")
+            self.assertTrue((Path(directory) / "drift.json").is_file())
+
+    def test_cli_fails_closed_when_baseline_is_malformed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / "bad-baseline.csv"
+            output = Path(directory) / "output"
+            baseline.write_text("id,value\n1,ok,extra\n", encoding="utf-8")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "src/csv_brief.py"),
+                    str(ROOT / "assets/synthetic_sales.csv"),
+                    "--baseline",
+                    str(baseline),
+                    "--output-dir",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertNotEqual(process.returncode, 0)
+            self.assertFalse((output / "drift.json").exists())
 
 
 if __name__ == "__main__":
