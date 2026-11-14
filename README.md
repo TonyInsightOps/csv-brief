@@ -1,6 +1,15 @@
-# CSV Brief
+# CSV Brief — check an export before it breaks a report
 
-![CSV Brief — from raw CSV to reviewable insight](docs/csv-brief-hero.png)
+**Two CSVs in; a reviewable report and traceable exceptions out.** Catch duplicate
+join keys, newly missing values, and schema changes before an export goes into
+Excel, SQL, or Power BI. Runs locally without an account or an API key.
+
+[See the sample audit →](docs/sample-audit.md) · [Run the demo](#one-command-demo)
+
+![Sample audit: seven rows, one duplicate key and one missing revenue value.](docs/sample-audit.svg)
+
+*Invented sample data. This is an audit demo, not a client case or an automatic
+cleanup.*
 
 [![Tests](https://github.com/TonyInsightOps/csv-brief/actions/workflows/test.yml/badge.svg)](https://github.com/TonyInsightOps/csv-brief/actions/workflows/test.yml)
 ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB)

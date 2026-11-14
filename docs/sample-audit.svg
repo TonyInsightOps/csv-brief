@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360" role="img" aria-labelledby="title description">
+  <title id="title">Sample audit: clean baseline versus incoming export</title>
+  <desc id="description">Invented data. The baseline has six rows and no alerts. The incoming export has seven rows, one duplicate order key, and one blank revenue value.</desc>
+  <rect width="960" height="360" rx="22" fill="#102039"/>
+  <g font-family="system-ui, sans-serif">
+    <text x="34" y="57" font-size="34" font-weight="700" fill="#f6f9ff">Would you trust this export?</text>
+    <text x="36" y="91" font-size="18" fill="#bed0e9">CSV Brief | Reproducible audit on invented data</text>
+    <rect x="35" y="116" width="430" height="174" rx="14" fill="#1c3451"/>
+    <rect x="486" y="116" width="439" height="174" rx="14" fill="#26344e"/>
+    <text x="56" y="151" font-size="19" font-weight="700" fill="#a7ebd3">REFERENCE EXPORT</text>
+    <text x="507" y="151" font-size="19" font-weight="700" fill="#ffe197">INCOMING EXPORT</text>
+    <g fill="#f6f9ff" font-size="21">
+      <text x="56" y="185">6 rows · 6 columns</text><text x="507" y="185">7 rows · 6 columns</text>
+      <text x="56" y="224">0 duplicate key groups</text><text x="507" y="224">1 duplicate key group</text>
+      <text x="56" y="263">0 blank revenue fields</text><text x="507" y="263">1 blank revenue field</text>
+    </g>
+    <text x="36" y="326" fill="#bed0e9" font-size="18">Reports identify affected source rows; the audit does not change the file.</text>
+  </g>
+</svg>
