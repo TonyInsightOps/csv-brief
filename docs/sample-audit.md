@@ -40,6 +40,23 @@ python3 scripts/run_demo.py
 The demo should print `[PASS]`: this means it correctly detected the *intentional
 regressions*, not that the incoming CSV passed the join gate.
 
+## Keep the sample outputs for review
+
+The quick demo cleans up its temporary files. To keep the same synthetic audit
+on disk, run this from the repository root:
+
+```bash
+python3 src/csv_brief.py assets/synthetic_sales.csv \
+  --baseline assets/synthetic_sales_baseline.csv \
+  --key order_id --output-dir sample-audit-output
+```
+
+This command intentionally exits with status `2` **after** writing the files.
+Open `sample-audit-output/brief.html` in a browser. Use `profile.json` to check the
+row counts and duplicate source lines, and `drift.json` to see which changes
+require review. No input rows are changed. Pick a fresh output directory if you
+want to retain an earlier run.
+
 For a similar audit, start with a de-identified export, the columns expected to
 be unique and an optional baseline. Agree which exceptions require review
 before any cleanup or implementation. No XLSX, PDF/OCR, fuzzy matching or
